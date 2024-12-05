@@ -1,7 +1,8 @@
-import numpy
+import numpy as np
 import math
 from CoolProp.CoolProp import PropsSI
 import matplotlib.pyplot as plt
+from parameter import parameter_of_cooling
 
 class ElectricVehicleModel:
     def __init__(self):
@@ -48,6 +49,9 @@ class ElectricVehicleModel:
 
         self.h_cond_out = 300 # Enthalpy at the outlet of condenser (kJ/Kg)
         self.P_cond_out = 2100  # Pressure at the outlet of condenser (kPa)
+        self.T_amb = 22        # 外界空气温度 (℃) , 冷凝器和外界空气换热
+        self.capacity_air = 1005   # 空气比热容 (J/kg·°C)
+        self.v_air = 0  # 风扇输出的风速
 
         self.P_eva_in = 600
 
@@ -57,7 +61,7 @@ class ElectricVehicleModel:
         '''
         self.massflow_rfg = 0   # Mass flow rate of refrigerant (Kg/s)
         self.massflow_clnt = 0  # Mass flow rate of coolant (Kg/s)
-        self.T_clnt_eva_in = 22 # 假定的初始的进入蒸发器的冷却液温度 (℃)
+        self.T_clnt_eva_in = self.T_amb # 假定的初始的进入蒸发器的冷却液温度 (℃)
 
         '''
         Vehicle_Dynamics_Model
@@ -73,6 +77,7 @@ class ElectricVehicleModel:
     def compute_massflow_rfg(self, omega_comp):
         eta_comp = 1e-5 * omega_comp + 0.9
         self.massflow_rfg = self.V_comp * eta_comp * omega_comp * self.rho_rfg * 2 * math.pi / 60
+        print("制冷循环质量流速 = ", self.massflow_rfg)
 
     def power_compressor(self, omega_comp):
         eta_isen = 0.75
@@ -88,19 +93,58 @@ class ElectricVehicleModel:
             P_comp = torque_comp * omega_comp / eta_c
         return P_comp
     
-    def condenser(self):
-        Q_c = self.massflow_rfg * (self.h_comp_out - self.h_cond_out)
+    def condenser(self, D_fan = 0.4, A_heat_exchange = 1.5):
         '''
-        冷凝板待完善，需要添加风扇散热模型
-        P_fan = alpha_fan * ( m_{a,fan} - m^{lb}_{a,fan})^2
-        用到radiator函数
-        目前是假设散热能力足够，可以达到饱和液体状态，同时不考虑风扇能耗
+        添加GPT提供的风扇模型, 风速与车速和风扇转速有关
+        通过NTU方法建立的condenser散热模型, 计算散热量
+        从而计算出condenser出口的液体焓值
         '''
-        return Q_c
+        T_frg_cond_in = PropsSI('T', 'P', self.P_comp_out * 1e3, 'H', self.h_comp_out * 1e3, 'R134a') - 273.15
+
+        # 风扇空气质量流量
+        A_fan = np.pi * (D_fan / 2)**2  # 风扇截面积
+        massflow_air = self.rho_air * A_fan * self.v_air
+
+        C_min = min(self.massflow_rfg * self.capacity_rfg, massflow_air * self.capacity_air)
+        C_max = max(self.massflow_rfg * self.capacity_rfg, massflow_air * self.capacity_air)
+
+        if C_min == 0:
+            self.h_cond_out = self.h_comp_out
+        else:
+            C_r = C_max / C_min
+            print('空气流速和体积流量 = ', self.v_air, self.massflow_rfg / self.rho_rfg * 1000 * 60)
+            NTU = parameter_of_cooling(self.v_air, self.massflow_rfg / self.rho_rfg * 1000 * 60) * A_heat_exchange / C_min
+            episolon = 1-np.exp(-NTU)
+            
+            Q_c = episolon * C_min * (T_frg_cond_in - self.T_amb)
+            self.h_cond_out = (self.h_comp_out - Q_c / self.massflow_rfg / 1000).item()
+            print("散热器出口液体焓值 = ", self.h_cond_out)
+        
+    
+    def power_fan(self, omega_fan, v_veh, D_fan=0.4, k_fan=0.5, beta=0.8, gamma=0.02, lambda_v=0.6, v_air_max=10):
+        """
+        模拟风扇的功率和空气流速 (修正风扇转速与车辆速度关系)
+        """
+        # 修正风扇转速
+        omega_fan_effective = omega_fan * (1 - gamma * v_veh)
+        if omega_fan_effective < 0:
+            omega_fan_effective = 0  # 风扇不能有负转速
+
+        # 风扇出口空气流速
+        v_air = lambda_v * v_veh + beta * omega_fan_effective * D_fan
+        v_air = min(v_air, v_air_max)  # 限制风速最大值
+        self.v_air = v_air
+
+        # 风扇功率
+        P_fan = k_fan * omega_fan_effective**3
+
+        return P_fan
+
     
     def compute_massflow_clnt(self, omega_pump):
         eta_pump = 1e-5 * omega_pump + 0.9
         self.massflow_clnt = self.V_pump * eta_pump * omega_pump * self.rho_clnt * 2 * math.pi / 60
+        print("冷却循环质量流速 = ", self.massflow_clnt)
 
     def evaporator(self):
         self.P_eva_in = self.P_cond_out - (self.P_comp_out - self.P_comp_in)
@@ -144,12 +188,14 @@ class ElectricVehicleModel:
         return P_pump
         
     
-    def battery_thermal_generation(self, T_bat, velocity, omega_comp, omega_pump):
+    def battery_thermal_generation(self, T_bat, velocity, omega_comp, omega_pump, omega_fan):
+        P_fan = self.power_fan(omega_fan, velocity)  # 更新风扇转速，condenser散热量也及时更新
         P_trac = self.Vehicle_Dynamics_Model(velocity)
         P_comp = self.power_compressor(omega_comp)
         P_pump = self.power_pump(omega_pump)
+        
         # print('牵引功率, 压缩机功率, 泵功率 分别为', P_trac, P_comp, P_pump)
-        self.P_cooling = P_pump + P_comp
+        self.P_cooling = P_pump + P_comp + P_fan
         P_bat = P_trac + self.P_cooling
         
         I_bat = (self.U_oc - math.sqrt(self.U_oc ** 2 - 4 * self.R_bat * P_bat)) / (2 * self.R_bat)
@@ -168,13 +214,22 @@ class ElectricVehicleModel:
         Q_gen = I_bat**2 * self.R_bat + abs(I_bat) * (T_bat + 273.15) * self.entropy_coefficient
         return Q_gen
 
-    def battery_thermal_model(self, T_bat, velocity, omega_comp, omega_pump):
+    def battery_thermal_model(self, T_bat, velocity, omega_comp, omega_pump, omega_fan):
         Q_cool = self.battery_cooling(T_bat)
         print('电池散热量: ', Q_cool)
-        Q_gen = self.battery_thermal_generation(T_bat, velocity, omega_comp, omega_pump)
+        Q_gen = self.battery_thermal_generation(T_bat, velocity, omega_comp, omega_pump, omega_fan)
         print('电池发热量: ', Q_gen)
         T_bat_next = T/(self.M_bat * self.capacity_bat_thermal)*(Q_cool + Q_gen) + T_bat
+        self.condenser()
         return T_bat_next
+    
+    def battery_thermal_model_without_cooling_system(self, T_bat, velocity):
+        P_bat = self.Vehicle_Dynamics_Model(velocity)
+        I_bat = (self.U_oc - math.sqrt(self.U_oc ** 2 - 4 * self.R_bat * P_bat)) / (2 * self.R_bat)
+        Q_gen = I_bat**2 * self.R_bat + abs(I_bat) * (T_bat + 273.15) * self.entropy_coefficient
+        T_bat_next = T/(self.M_bat * self.capacity_bat_thermal)*(Q_gen) + T_bat
+        return T_bat_next
+
 
     def Vehicle_Dynamics_Model(self, v):
         delta = 1.13  # Correction coefficient for rotating mass
@@ -208,7 +263,7 @@ def movement(time):
     
     return v
 
-T = 1  # 采样时间 
+T = 0.1  # 采样时间 
 t = 0  # 系统开始的时间
 
 T_bat = 30
@@ -217,38 +272,47 @@ T_thres_lower=28
 EV = ElectricVehicleModel()
 omega_comp = 0.
 omega_pump = 0.
+omega_fan  = 0.
 
 time = []
 battery_temperature = []
 # 用于存储制冷循环的数据
 cycle_data = []  # 每个元素存储一组 [h_eva_out, P_eva_out, h_comp_out, P_comp_out, h_cond_out, P_cond_out, h_eva_in, P_eva_in]
 
+on_off_mode_of_cooling_system = 0 # 0为关, 1为开
 
 while t < 1000:
     v = movement(t)
+    if on_off_mode_of_cooling_system == 0:
+        T_bat = EV.battery_thermal_model_without_cooling_system(T_bat, v)
+        if T_bat > T_thres_upper:  # 若电池温度大于目标温度，启动制冷冷却循环
+            on_off_mode_of_cooling_system = 1
+    else:
+        omega_comp = 600.0
+        omega_pump = 500.0
+        oemga_fan = 300
 
-    if T_bat > T_thres_upper:  # 若电池温度大于目标温度，启动制冷冷却循环
-        omega_comp = 3000.0
-        omega_pump = 2000.0
-    elif T_bat < T_thres_lower: # 若电池温度小于最低温度，关闭制冷冷却循环
-        omega_comp = 0.
-        omega_pump = 0.
-    
-    EV.compute_massflow_rfg(omega_comp)  # 更新制冷循环质量流量
-    EV.compute_massflow_clnt(omega_pump) # 更新冷却循环质量流量
+        EV.compute_massflow_rfg(omega_comp)  # 更新制冷循环质量流量
+        EV.compute_massflow_clnt(omega_pump) # 更新冷却循环质量流量
+
+        T_bat = EV.battery_thermal_model(T_bat, v, omega_comp, omega_pump, omega_fan)
+        '''
+        更新温度: 调用了battery_cooling和battery_thermal_generation
+            - battery_thermal_generation计算了电池的发热量
+            - battery_cooling调用了evaporator()函数, 更新冷却循环中冷却液到电池吸热后出口的温度T_clnt_eva_in
+                ·evaporator()函数中更新了制冷循环中的蒸发器出口焓值h_rfg_eva_out
+                    h_rfg_eva_out影响压缩机的功率P_comp以及压缩机出口焓值h_comp_out
+                        h_comp_out影响冷凝板功率, 冷凝板通过风扇冷却, 同时计算出出口的h_cond_out, 需要为饱和液体或过冷液体
+                ·更新后的T_clnt_eva_in会影响下一时刻的evaporator()中制冷循环eva出口焓值以及冷却循环电池冷却液入口温度
+        '''
+        if T_bat < T_thres_lower: # 若电池温度小于最低温度，关闭制冷冷却循环
+            omega_comp = 0.
+            omega_pump = 0.
+            omega_fan = 0.
+            on_off_mode_of_cooling_system = 0
     
 
-    T_bat = EV.battery_thermal_model(T_bat, v, omega_comp, omega_pump)
-    '''
-    更新温度: 调用了battery_cooling和battery_thermal_generation
-        - battery_thermal_generation计算了电池的发热量
-        - battery_cooling调用了evaporator()函数, 更新冷却循环中冷却液到电池吸热后出口的温度T_clnt_eva_in
-            ·evaporator()函数中更新了制冷循环中的蒸发器出口焓值h_rfg_eva_out
-                h_rfg_eva_out影响压缩机的功率P_comp以及压缩机出口焓值h_comp_out
-                    h_comp_out影响冷凝板功率, 冷凝板需要将h_comp_out降低到h_cond_out, 即刚好是饱和液体
-            ·更新后的T_clnt_eva_in会影响下一时刻的evaporator()中制冷循环eva出口焓值以及冷却循环电池冷却液入口温度
-    '''
-    print('当时间为: ', t, ' 时 ', ' 电池温度为 ', T_bat)
+    print('当时间为: ', t, ' 时 ', '冷却系统模式为', on_off_mode_of_cooling_system, ' 电池温度为 ', T_bat)
 
     # 存储时间和电池温度数据用于绘图
     time.append(t)
