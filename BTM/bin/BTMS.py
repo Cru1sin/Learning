@@ -40,16 +40,16 @@ class ElectricVehicleModel:
         self.A_eva = 0.3 # Heat transfer sectional area between evaporator and refrigerant/coolant (m^2)
         self.PR = 5 # Compression ratio of the compressor
 
-        self.h_comp_out = 284.3 # Enthalpy at the outlet of compressor (kJ/Kg)
-        self.P_comp_out = 1500  # Pressure at the outlet of compressor (kPa)
+        self.h_comp_out = 430 # Enthalpy at the outlet of compressor (kJ/Kg)
+        self.P_comp_out = 2100  # Pressure at the outlet of compressor (kPa)
 
-        self.h_eva_out = 250.9  # Enthalpy at the outlet of evaporator (kJ/Kg)
-        self.P_comp_in = 300    # Pressure at the inlet of compressor (kPa)
+        self.h_eva_out = 410  # Enthalpy at the outlet of evaporator (kJ/Kg)
+        self.P_comp_in = 600    # Pressure at the inlet of compressor (kPa)
 
-        self.h_cond_out = 131.7 # Enthalpy at the outlet of condenser (kJ/Kg)
-        self.P_cond_out = 1500  # Pressure at the outlet of condenser (kPa)
+        self.h_cond_out = 300 # Enthalpy at the outlet of condenser (kJ/Kg)
+        self.P_cond_out = 2100  # Pressure at the outlet of condenser (kPa)
 
-        self.P_eva_in = 300
+        self.P_eva_in = 600
 
         
         '''
@@ -129,6 +129,7 @@ class ElectricVehicleModel:
         else:
             T_clnt_out = (T_clnt_in - T_bat) * math.exp(-(self.h_bat * self.A_bat) / (self.massflow_clnt * self.capacity_clnt)) + T_bat
         self.T_clnt_eva_in = T_clnt_out  # 更新冷却循环中冷却液到电池吸热后出口的温度
+        print("冷却液进出口温度分别为 = ", T_clnt_in, T_clnt_out)
         Q_cool = self.massflow_clnt * self.capacity_clnt * (T_clnt_in - T_clnt_out)
         return Q_cool
     
@@ -223,7 +224,7 @@ battery_temperature = []
 cycle_data = []  # 每个元素存储一组 [h_eva_out, P_eva_out, h_comp_out, P_comp_out, h_cond_out, P_cond_out, h_eva_in, P_eva_in]
 
 
-while t < 1125:
+while t < 1000:
     v = movement(t)
 
     if T_bat > T_thres_upper:  # 若电池温度大于目标温度，启动制冷冷却循环
