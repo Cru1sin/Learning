@@ -3,6 +3,7 @@ import math
 from CoolProp.CoolProp import PropsSI
 import matplotlib.pyplot as plt
 from parameter import parameter_of_cooling
+from parameter import coefficient_heat_exchange
 
 class ElectricVehicleModel:
     def __init__(self):
@@ -52,6 +53,7 @@ class ElectricVehicleModel:
         self.T_amb = 22        # 外界空气温度 (℃) , 冷凝器和外界空气换热
         self.capacity_air = 1005   # 空气比热容 (J/kg·°C)
         self.v_air = 0  # 风扇输出的风速
+        self.A_cond = 1
 
         self.P_eva_in = 600
 
@@ -113,12 +115,16 @@ class ElectricVehicleModel:
         else:
             C_r = C_max / C_min
             print('空气流速和体积流量 = ', self.v_air, self.massflow_rfg / self.rho_rfg * 1000 * 60)
-            NTU = parameter_of_cooling(self.v_air, self.massflow_rfg / self.rho_rfg * 1000 * 60) * A_heat_exchange / C_min
+            h_air = 16 * self.v_air + 32 # 汽车散热器的多场耦合分析与结构优化 知网
+            h_frg = coefficient_heat_exchange(T_frg_cond_in + 273.15, self.P_comp_out * 1e3, self.massflow_rfg)
+            U = 1 / (1 / h_air + 1 / h_frg)
+            NTU = U * self.A_cond / C_min
+            # NTU = parameter_of_cooling(self.v_air, self.massflow_rfg / self.rho_rfg * 1000 * 60) * A_heat_exchange / C_min
             episolon = 1-np.exp(-NTU)
             
             Q_c = episolon * C_min * (T_frg_cond_in - self.T_amb)
             self.h_cond_out = (self.h_comp_out - Q_c / self.massflow_rfg / 1000).item()
-            print("散热器出口液体焓值 = ", self.h_cond_out)
+            print("NTU = ", NTU, "episolon = ", episolon,"散热器出口液体焓值 = ", self.h_cond_out)
         
     
     def power_fan(self, omega_fan, v_veh, D_fan=0.4, k_fan=0.5, beta=0.8, gamma=0.02, lambda_v=0.6, v_air_max=10):
@@ -281,7 +287,7 @@ cycle_data = []  # 每个元素存储一组 [h_eva_out, P_eva_out, h_comp_out, P
 
 on_off_mode_of_cooling_system = 0 # 0为关, 1为开
 
-while t < 1000:
+while t < 200:
     v = movement(t)
     if on_off_mode_of_cooling_system == 0:
         T_bat = EV.battery_thermal_model_without_cooling_system(T_bat, v)

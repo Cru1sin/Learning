@@ -27,3 +27,28 @@ def parameter_of_cooling(air_velocity_input, coolant_flow_input):
     heat_exchange_pred = interpolator([air_velocity_input, coolant_flow_input])
 
     return heat_exchange_pred
+
+from CoolProp.CoolProp import PropsSI
+import math
+def coefficient_heat_exchange(T, P, massflow):
+    k = PropsSI('L', 'T', T, 'P', P, 'R134a')  # Thermal conductivity (W/m·K)
+    mu = PropsSI('V', 'T', T, 'P', P, 'R134a')  # Dynamic viscosity (Pa·s)
+    cp = PropsSI('C', 'T', T, 'P', P, 'R134a')  # Specific heat (J/kg·K)
+    rho = PropsSI('D', 'T', T, 'P', P, 'R134a')  # Density (kg/m³)
+
+    # Step 2: Define flow parameters
+    D = 0.01  # Pipe diameter in meters
+    v = massflow / (math.pi/4 * rho * D**2)
+
+    # Step 3: Calculate Reynolds and Prandtl numbers
+    Re = rho * v * D / mu
+    Pr = cp * mu / k
+
+    # Step 4: Use ht library to compute Nusselt number and heat transfer coefficient
+    # Step 4: Determine the flow regime and calculate Nu
+    if Re < 2300:  # Laminar flow
+        Nu = 3.66  # Fully developed laminar flow
+    elif Re > 4000:  # Turbulent flow
+        Nu = 0.023 * (Re**0.8) * (Pr**0.3)  # Dittus-Boelter equation
+    h = Nu * k / D  # Convective heat transfer coefficient
+    return h
