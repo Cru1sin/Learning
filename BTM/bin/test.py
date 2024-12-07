@@ -20,9 +20,3 @@ print(f"温度为: {T_rfg_cond_in:.2f} C, 状态为: {Q_rfg_cond_in:.2f} ")
 
 
 
-
-# Print results
-print(f"Reynolds Number: {Re}")
-print(f"Prandtl Number: {Pr}")
-print(f"Nusselt Number: {Nu}")
-print(f"Convective Heat Transfer Coefficient, h: {h} W/m²·K")

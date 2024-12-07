@@ -35,7 +35,7 @@ def coefficient_heat_exchange(T, P, massflow):
     mu = PropsSI('V', 'T', T, 'P', P, 'R134a')  # Dynamic viscosity (Pa·s)
     cp = PropsSI('C', 'T', T, 'P', P, 'R134a')  # Specific heat (J/kg·K)
     rho = PropsSI('D', 'T', T, 'P', P, 'R134a')  # Density (kg/m³)
-
+    print("rho = ", rho)
     # Step 2: Define flow parameters
     D = 0.01  # Pipe diameter in meters
     v = massflow / (math.pi/4 * rho * D**2)

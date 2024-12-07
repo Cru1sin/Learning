@@ -115,7 +115,7 @@ class ElectricVehicleModel:
         else:
             C_r = C_max / C_min
             print('空气流速和体积流量 = ', self.v_air, self.massflow_rfg / self.rho_rfg * 1000 * 60)
-            h_air = 16 * self.v_air + 32 # 汽车散热器的多场耦合分析与结构优化 知网
+            h_air = 20 * self.v_air ** 0.8 # GPT
             h_frg = coefficient_heat_exchange(T_frg_cond_in + 273.15, self.P_comp_out * 1e3, self.massflow_rfg)
             U = 1 / (1 / h_air + 1 / h_frg)
             NTU = U * self.A_cond / C_min
@@ -169,6 +169,12 @@ class ElectricVehicleModel:
         T_rfg_eva_out = B * T_rfg_eva_in + (1 - B) * self.T_clnt_eva_in
 
         self.h_eva_out = PropsSI('H', 'P', self.P_comp_in * 1e3, 'T', T_rfg_eva_out + 273.15, 'R134a') * 1e-3 # 更新制冷循环中蒸发器出口、压缩机进口的焓值
+        Q_rfg_comp_in = PropsSI('Q', 'P', self.P_comp_in * 1e3, 'H', self.h_eva_out * 1e3, 'R134a')
+        
+        if 0 < Q_rfg_comp_in < 1:
+            print("eva出口rfg流体当前状态在两相区域")
+        else:
+            print("eva出口流体rfg当前状态是亚冷液体或过热蒸汽") # 制冷剂在制冷循环的evaporator出口需要是过热蒸汽
         
         return T_clnt_eva_out
     
@@ -295,7 +301,7 @@ while t < 200:
             on_off_mode_of_cooling_system = 1
     else:
         omega_comp = 600.0
-        omega_pump = 500.0
+        omega_pump = 100.0
         oemga_fan = 300
 
         EV.compute_massflow_rfg(omega_comp)  # 更新制冷循环质量流量
