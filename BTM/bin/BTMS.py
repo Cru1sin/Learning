@@ -13,14 +13,14 @@ class ElectricVehicleModel:
         and the number of batteries connected in parallel is 20
 
         '''
-        self.M_bat = 290 # Battery thermal mass (kg) = 0.145 * 100 * 20 = 290
+        self.M_bat = 40 # Battery thermal mass (kg) = 0.145 * 100 * 20 = 290
         self.capacity_bat_thermal = 1350  # Battery specific heat capacity (J/kg·K)
         self.capacity_bat_elec = 100 # 电池的电量 (Ah) 5 * 20 = 100 
-        self.A_bat = 2   # 电池包的冷却表面积(m^2) 假设电池包尺寸为 1.0 * 1.0 * 0.3
+        self.A_bat = 12   # 电池包的冷却表面积(m^2) 假设电池包尺寸为 1.0 * 1.0 * 0.3
         self.entropy_coefficient = 0.06  # 电池的熵系数 (V/K)
 
         self.U_oc = 320 # 假定开路电压 (V) = 3.2 * 100
-        self.R_bat = 2 * 1e-3  # 假定电池包内阻 (Ω)
+        self.R_bat = 6 * 1e-3  # 假定电池包内阻 (Ω)
 
         self.SOC = 1 # 电池初始的SOC
         '''
@@ -258,12 +258,12 @@ class ElectricVehicleModel:
         eta_p = 0.9  # Powertrain efficiency
         g = 9.8
         a = (v - self.v_previous)/T
-        F_r = f * m_veh * g
-        F_a = 0.5 * C_d * A_wind * self.rho_air * v**2
+        F_r = f * m_veh * g # 滚动摩擦力
+        F_a = 0.5 * C_d * A_wind * self.rho_air * v**2 # 空气阻力
         if a >= 0:
             P_trac = (v * (delta * m_veh * a + F_r + F_a)) / eta_p
         else:
-            P_trac = (v * (delta * m_veh * a + F_r + F_a)) * eta_p
+            P_trac = abs(v * (delta * m_veh * a + F_r + F_a)) # 无再生制动
         # print('此时的速度, 加速度, 牵引功率为', v , a, P_trac)
         self.v_previous = v  # 储存这个时刻的速度v, 来计算下一时刻的加速度
         return P_trac 
@@ -283,10 +283,11 @@ def movement(time):
     
     return v
 
-T = 1  # 采样时间 
+T = 0.1  # 采样时间 
 t = 0  # 系统开始的时间
 k = 30 # 每三十个采样时间(30sec)更新一次SOC以及其他电池参数
 i = 0
+end_time = 1600 # 结束时间 (sec)
 current_history = []
 
 T_bat = 30
@@ -299,12 +300,15 @@ omega_fan  = 0.
 
 time = []
 battery_temperature = []
+SOC_history = [EV.SOC]
+time_SOC = [t]
+
 # 用于存储制冷循环的数据
 cycle_data = []  # 每个元素存储一组 [h_eva_out, P_eva_out, h_comp_out, P_comp_out, h_cond_out, P_cond_out, h_eva_in, P_eva_in]
 
 on_off_mode_of_cooling_system = 0 # 0为关, 1为开
 
-while t < 1000:
+while t < end_time:
     v = movement(t)
     if on_off_mode_of_cooling_system == 0:
         T_bat = EV.battery_thermal_model_without_cooling_system(T_bat, v)
@@ -313,7 +317,7 @@ while t < 1000:
     else:
         omega_comp = 600.0
         omega_pump = 100.0
-        oemga_fan = 300
+        oemga_fan = 300.0
 
         EV.compute_massflow_rfg(omega_comp)  # 更新制冷循环质量流量
         EV.compute_massflow_clnt(omega_pump) # 更新冷却循环质量流量
@@ -350,14 +354,27 @@ while t < 1000:
             EV.h_cond_out, EV.P_eva_in  # 蒸发器入口
         ])
 
-    t += T
+    
+
+    '''
+    更新SOC: SOC((k+1)T) = SOC(kT) - IT/(3600*C)
+    目前问题是由于电流的剧烈变化（通常是非线性波动或尖峰），SOC 误差可能随采样时间显著增大。
+    因此目前暂时不考虑再生制动
+    '''
     if i == k:
         for j in current_history:
-            EV.SOC -= j / 3600 / EV.capacity_bat_elec 
+            if j>= 0:
+                EV.SOC -= j / 3600 / EV.capacity_bat_elec * T
         print("电池的SOC为 = ", EV.SOC)
+        current_history = []
+        SOC_history.append(EV.SOC)
+        time_SOC.append(t)
+        i = 0
     else:
         current_history.append(EV.I_bat)
         i+=1
+    
+    t += T
 
 # --- 第一部分：绘制电池温度随时间的变化 ---
 plt.figure(figsize=(10, 5))
@@ -371,7 +388,17 @@ plt.legend()
 plt.grid()
 plt.show()
 
-# --- 第二部分：绘制制冷循环的焓值-压力图 ---
+# --- 第二部分：绘制电池SOC随时间的变化 ---
+plt.figure(figsize=(10, 5))
+plt.plot(time_SOC, SOC_history, label='Battery SOC')
+plt.xlabel('Time (s)')
+plt.ylabel('Battery SOC (%)')
+plt.title('Battery SOC vs. Time')
+plt.legend()
+plt.grid()
+plt.show()
+
+# --- 第三部分：绘制制冷循环的焓值-压力图 ---
 # 确保记录的 cycle_data 至少有 4 组数据
 if len(cycle_data) >= 4:
     plt.figure(figsize=(10, 8))
