@@ -22,6 +22,7 @@ class ElectricVehicleModel:
         self.U_oc = 320 # 假定开路电压 (V) = 3.2 * 100
         self.R_bat = 2 * 1e-3  # 假定电池包内阻 (Ω)
 
+        self.SOC = 1 # 电池初始的SOC
         '''
         Coolant
         40% 乙二醇 + 60% 水的混合液
@@ -77,6 +78,7 @@ class ElectricVehicleModel:
         中间变量储存
         '''
         self.P_cooling = 0 # 储存电池发热模型中计算的中间变量冷却系统功率P_cooling
+        self.I_bat = 0
 
     def compute_massflow_rfg(self, omega_comp):
         eta_comp = 1e-5 * omega_comp + 0.9
@@ -126,7 +128,7 @@ class ElectricVehicleModel:
             
             Q_c = episolon * C_min * (T_frg_cond_in - self.T_amb)
             self.h_cond_out = (self.h_comp_out - Q_c / self.massflow_rfg / 1000).item()
-            Q_cond_out = 340.73 - PropsSI('T', 'P', self.P_cond_out, 'H', self.h_cond_out, 'R134a')
+            Q_cond_out = 340.73 - PropsSI('T', 'P', self.P_cond_out * 1e3, 'H', self.h_cond_out * 1e3, 'R134a')
             print("过冷度为 = ", Q_cond_out)
         
     
@@ -214,6 +216,7 @@ class ElectricVehicleModel:
         P_bat = P_trac + self.P_cooling
         
         I_bat = (self.U_oc - math.sqrt(self.U_oc ** 2 - 4 * self.R_bat * P_bat)) / (2 * self.R_bat)
+        self.I_bat = I_bat
         '''
         不考虑摩擦制动 Assume that all the brakings can be accommodated through electric brakes
         Note that the regenerative braking, unlike the friction braking, 
@@ -265,6 +268,8 @@ class ElectricVehicleModel:
         self.v_previous = v  # 储存这个时刻的速度v, 来计算下一时刻的加速度
         return P_trac 
 
+
+
     def aging_model(self):
         return 0
     
@@ -278,8 +283,11 @@ def movement(time):
     
     return v
 
-T = 0.1  # 采样时间 
+T = 1  # 采样时间 
 t = 0  # 系统开始的时间
+k = 30 # 每三十个采样时间(30sec)更新一次SOC以及其他电池参数
+i = 0
+current_history = []
 
 T_bat = 30
 T_thres_upper=32
@@ -296,7 +304,7 @@ cycle_data = []  # 每个元素存储一组 [h_eva_out, P_eva_out, h_comp_out, P
 
 on_off_mode_of_cooling_system = 0 # 0为关, 1为开
 
-while t < 200:
+while t < 1000:
     v = movement(t)
     if on_off_mode_of_cooling_system == 0:
         T_bat = EV.battery_thermal_model_without_cooling_system(T_bat, v)
@@ -343,6 +351,13 @@ while t < 200:
         ])
 
     t += T
+    if i == k:
+        for j in current_history:
+            EV.SOC -= j / 3600 / EV.capacity_bat_elec 
+        print("电池的SOC为 = ", EV.SOC)
+    else:
+        current_history.append(EV.I_bat)
+        i+=1
 
 # --- 第一部分：绘制电池温度随时间的变化 ---
 plt.figure(figsize=(10, 5))
