@@ -13,16 +13,18 @@ class ElectricVehicleModel:
         and the number of batteries connected in parallel is 20
 
         '''
-        self.M_bat = 40  # Battery thermal mass (kg)
+        self.M_bat = 290 # Battery thermal mass (kg) = 0.145 * 100 * 20 = 290
         self.capacity_bat_thermal = 1350  # Battery specific heat capacity (J/kg·K)
-        self.A_bat = 12   # 电池包的表面积(m^2)
+        self.capacity_bat_elec = 100 # 电池的电量 (Ah) 5 * 20 = 100 
+        self.A_bat = 2   # 电池包的冷却表面积(m^2) 假设电池包尺寸为 1.0 * 1.0 * 0.3
         self.entropy_coefficient = 0.06  # 电池的熵系数 (V/K)
 
-        self.U_oc = 320 # 假定开路电压 (V)
-        self.R_bat = 6 * 1e-3  # 假定电池包内阻 (Ω)
+        self.U_oc = 320 # 假定开路电压 (V) = 3.2 * 100
+        self.R_bat = 2 * 1e-3  # 假定电池包内阻 (Ω)
 
         '''
         Coolant
+        40% 乙二醇 + 60% 水的混合液
         '''
         self.rho_clnt = 1069.5  # Density of coolant (kg/m^3)
         self.capacity_clnt = 3330 # Specific heat capacity of coolant (J/kg·K)
@@ -115,7 +117,7 @@ class ElectricVehicleModel:
         else:
             C_r = C_max / C_min
             print('空气流速和体积流量 = ', self.v_air, self.massflow_rfg / self.rho_rfg * 1000 * 60)
-            h_air = 16 * self.v_air + 32 # 汽车散热器的多场耦合分析与结构优化 知网
+            h_air = 20 * self.v_air ** 0.8 # GPT
             h_frg = coefficient_heat_exchange(T_frg_cond_in + 273.15, self.P_comp_out * 1e3, self.massflow_rfg)
             U = 1 / (1 / h_air + 1 / h_frg)
             NTU = U * self.A_cond / C_min
@@ -124,7 +126,8 @@ class ElectricVehicleModel:
             
             Q_c = episolon * C_min * (T_frg_cond_in - self.T_amb)
             self.h_cond_out = (self.h_comp_out - Q_c / self.massflow_rfg / 1000).item()
-            print("NTU = ", NTU, "episolon = ", episolon,"散热器出口液体焓值 = ", self.h_cond_out)
+            Q_cond_out = 340.73 - PropsSI('T', 'P', self.P_cond_out, 'H', self.h_cond_out, 'R134a')
+            print("过冷度为 = ", Q_cond_out)
         
     
     def power_fan(self, omega_fan, v_veh, D_fan=0.4, k_fan=0.5, beta=0.8, gamma=0.02, lambda_v=0.6, v_air_max=10):
@@ -169,6 +172,12 @@ class ElectricVehicleModel:
         T_rfg_eva_out = B * T_rfg_eva_in + (1 - B) * self.T_clnt_eva_in
 
         self.h_eva_out = PropsSI('H', 'P', self.P_comp_in * 1e3, 'T', T_rfg_eva_out + 273.15, 'R134a') * 1e-3 # 更新制冷循环中蒸发器出口、压缩机进口的焓值
+        Q_rfg_comp_in = PropsSI('Q', 'P', self.P_comp_in * 1e3, 'H', self.h_eva_out * 1e3, 'R134a')
+        
+        if 0 < Q_rfg_comp_in < 1:
+            print("eva出口rfg流体当前状态在两相区域")
+        else:
+            print("eva出口流体rfg当前状态是过热蒸汽") # 制冷剂在制冷循环的evaporator出口需要是过热蒸汽
         
         return T_clnt_eva_out
     
@@ -295,7 +304,7 @@ while t < 200:
             on_off_mode_of_cooling_system = 1
     else:
         omega_comp = 600.0
-        omega_pump = 500.0
+        omega_pump = 100.0
         oemga_fan = 300
 
         EV.compute_massflow_rfg(omega_comp)  # 更新制冷循环质量流量
